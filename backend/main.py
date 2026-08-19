@@ -1,9 +1,8 @@
-
 from fastapi import Body
 from sqlalchemy import select
 from models import Message
 from typing import Annotated
-from fastapi import Path,Query
+from fastapi import Path, Query
 from utils import save_pdf_to_db, update_pdf_file_path, save_pdf_to_disk, get_pdf_path, success_response
 from rag import ingest_pdf
 from contextlib import asynccontextmanager
@@ -11,17 +10,10 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import traceback
-import os
-from langchain_community.document_loaders import PyPDFLoader
-from pydantic import BaseModel
-from database import create_db_and_tables,get_session
-from models import PDF  
+from database import create_db_and_tables, get_session
+from models import PDF
 from sqlmodel import Session
 from fastapi import Depends
-
-class QueryRequest(BaseModel):
-    query: str
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -81,7 +73,7 @@ session: Session = Depends(get_session)
 
 
 @app.get("/chat/{id}")
-async def get_chat(id:int = Annotated[int,Path(gt=0)], session: Session= Depends(get_session)):
+async def get_chat(id: Annotated[int, Path(gt=0)], session: Session = Depends(get_session)):
 
     try:
         messages=session.exec(
@@ -94,7 +86,7 @@ async def get_chat(id:int = Annotated[int,Path(gt=0)], session: Session= Depends
         raise HTTPException(status_code=500,detail=f"Failed to fetch messages")
 
 @app.post("/chat")
-async def get_chat_response(query:str = Annotated[str,Body(...)],id: int = Annotated[int,Query(title="Id of the pdf")],session:Session=Depends(get_session)):
+async def get_chat_response(query: Annotated[str, Body(...)], id: Annotated[int, Query(title="Id of the pdf")], session: Session = Depends(get_session)):
 
     try:
 
