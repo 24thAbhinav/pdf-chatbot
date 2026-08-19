@@ -94,10 +94,10 @@ function App() {
     setUploadSuccess(false);
 
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("pdf", file);
 
     try {
-      const response = await axios.post("http://127.0.0.1:8000/upload-pdf", formData, {
+      const response = await axios.post("http://127.0.0.1:8000/upload", formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
@@ -133,7 +133,7 @@ function App() {
         <div className="logo-section">
           <div className="logo-icon-wrapper">
             <svg viewBox="0 0 75 65" fill="none" xmlns="http://www.w3.org/2000/svg" className="logo-icon animate-pulse">
-              <path d="M37.5 0L75 65H0L37.5 0Z" fill="currentColor"/>
+              <path d="M37.5 0L75 65H0L37.5 0Z" fill="currentColor" />
             </svg>
           </div>
           <h1>DocuChat</h1>
