@@ -38,8 +38,10 @@ backend/*.pyc
 backend/*.pyo
 backend/*.pyd
 backend/.pytest_cache/
+backend/.venv/
 backend/uploads/*
 !backend/uploads/.gitkeep
+backend/vectorstores/
 
 # General logs and caches
 *.log

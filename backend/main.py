@@ -1,9 +1,11 @@
 
+from fastapi import Body
 from sqlalchemy import select
 from models import Message
 from typing import Annotated
-from fastapi import Path
-from utils import save_pdf_to_db,save_pdf_to_disk,get_pdf_path,success_response
+from fastapi import Path,Query
+from utils import save_pdf_to_db, update_pdf_file_path, save_pdf_to_disk, get_pdf_path, success_response
+from rag import ingest_pdf
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -57,14 +59,22 @@ session: Session = Depends(get_session)
     try:
         if not pdf.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
-        
-        file_path=get_pdf_path(pdf)
 
-        await save_pdf_to_disk(file_path,pdf)
+        # 1. Create DB record first so we get the auto-generated id
+        pdf_record = save_pdf_to_db(pdf, session)
 
-        pdf_id=save_pdf_to_db(file_path,pdf,session)
+        # 2. Build the id-based path and persist it back to DB
+        file_path = get_pdf_path(pdf_record.id)
         
-        return success_response("File uploaded successfully", {"filename": pdf.filename, "id": pdf_id})
+        update_pdf_file_path(pdf_record, file_path, session)
+
+        # 3. Write bytes to disk
+        await save_pdf_to_disk(file_path, pdf)
+
+        # 4. Chunk, embed and persist the vector store
+        ingest_pdf(pdf_record.id, file_path)
+
+        return success_response("File uploaded successfully", {"filename": pdf_record.file_name, "id": pdf_record.id})
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
@@ -83,11 +93,20 @@ async def get_chat(id:int = Annotated[int,Path(gt=0)], session: Session= Depends
         traceback.print_exc()
         raise HTTPException(status_code=500,detail=f"Failed to fetch messages")
 
-# @app.post("/chat")
-# async def get_chat_response(query:str):
-#     try:
+@app.post("/chat")
+async def get_chat_response(query:str = Annotated[str,Body(...)],id: int = Annotated[int,Query(title="Id of the pdf")],session:Session=Depends(get_session)):
+
+    try:
+
+        pdf=session.get(PDF,id)
+
+        if pdf is None:
+             raise HTTPException(status_code=404,detail=f"PDF not found")
         
-#     except Exception as e:
+
+
+    
+    except Exception as e:
 
 
 
