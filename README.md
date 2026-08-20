@@ -58,28 +58,29 @@ The ingestion pipeline executes **once per uploaded PDF**. Instead of re-embeddi
 flowchart TD
     Client([Client / Frontend]) -->|1. Upload PDF multipart form| UploadRoute["POST /upload"]
     
-    subgraph DatabasePhase ["1. Database Initialization"]
-        UploadRoute -->|2. Insert record| SaveDB["save_pdf_to_db(pdf, session)"]
-        SaveDB -->|Generates primary key| PDFRecord[("PostgreSQL: PDF (id, file_name)")]
+    subgraph DatabasePhase ["1. Two-Phase Database Insert & ID Generation"]
+        UploadRoute -->|2. Store metadata without file path to obtain auto-generated ID| SaveDB["save_pdf_to_db(pdf, session)"]
+        SaveDB -->|Generates primary key ID| PDFRecord[("PostgreSQL: PDF (id, file_name, file_path='')")]
+        PDFRecord -->|3. Construct file path using generated ID: uploads/ID.pdf| GetPath["get_pdf_path(pdf_id)"]
+        GetPath -->|4. Update database record with generated file_path| UpdateDB["update_pdf_file_path(pdf_record, file_path, session)"]
+        UpdateDB --> UpdatedDB[("PostgreSQL: Updated PDF with file_path")]
     end
     
-    subgraph DiskPhase ["2. File System Storage"]
-        PDFRecord -->|3. Compute path: uploads/id.pdf| GetPath["get_pdf_path(pdf_id)"]
-        GetPath -->|4. Update file_path in DB| UpdateDB["update_pdf_file_path(record, path)"]
-        UpdateDB -->|5. Save raw PDF bytes| WriteDisk["save_pdf_to_disk(file_path, pdf)"]
+    subgraph DiskPhase ["2. File System Persistence"]
+        UpdatedDB -->|5. Write raw bytes to disk using new ID-based path| WriteDisk["save_pdf_to_disk(file_path, pdf)"]
         WriteDisk --> RawFile[("Disk: backend/uploads/ID.pdf")]
     end
     
     subgraph IngestionPhase ["3. LangChain Ingestion & Vector Indexing"]
-        RawFile -->|6. Load document| PyPDF["PyPDFLoader(file_path)"]
+        RawFile -->|6. Load document from disk path| PyPDF["PyPDFLoader(file_path)"]
         PyPDF -->|7. Split into chunks| Splitter["RecursiveCharacterTextSplitter(1000, 200)"]
         Splitter -->|8. Generate embeddings| Embeddings["sentence-transformers/all-MiniLM-L6-v2"]
         Embeddings -->|9. Build FAISS index| VectorStore["FAISS.from_documents(chunks, embeddings)"]
-        VectorStore -->|10. Persist index to disk| SaveFAISS["save_local('vectorstores/ID')"]
+        VectorStore -->|10. Persist vector index to disk| SaveFAISS["save_local('vectorstores/ID')"]
         SaveFAISS --> FAISSFiles[("Disk: backend/vectorstores/ID/<br/>index.faiss & index.pkl")]
     end
     
-    FAISSFiles -->|11. Return JSON| Response(["200 OK: Success Envelope with ID & Filename"])
+    FAISSFiles -->|11. Return JSON response| Response(["200 OK: Success Envelope with ID & Filename"])
 ```
 
 ---
