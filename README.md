@@ -8,6 +8,10 @@
 
 - [Overview](#overview)
   - [Key Architecture & Features](#key-architecture--features)
+- [Architecture & Pipeline Diagrams](#architecture--pipeline-diagrams)
+  - [1. Upload & Ingestion Pipeline (POST /upload)](#1-upload--ingestion-pipeline-post-upload)
+  - [2. Query & Chat Pipeline (POST /chat)](#2-query--chat-pipeline-post-chat)
+  - [Disk Storage Paths & Directory Layout](#disk-storage-paths--directory-layout)
 - [Tech Stack](#tech-stack)
 - [Prerequisites](#prerequisites)
 - [Step-by-Step Installation & Setup](#step-by-step-installation--setup)
@@ -41,6 +45,109 @@
   - Left panel: list of uploaded PDF documents with click-to-chat routing.
   - Right panel: drag-and-drop PDF uploader with progress state.
   - Chat interface: conversation history, optimistic rendering, typing animation, and back navigation.
+
+---
+
+## Architecture & Pipeline Diagrams
+
+### 1. Upload & Ingestion Pipeline (`POST /upload`)
+
+The ingestion pipeline executes **once per uploaded PDF**. Instead of re-embedding the document on every query, the PDF is processed and stored on disk indexed by its unique database ID.
+
+```mermaid
+flowchart TD
+    Client([Client / Frontend]) -->|1. Uploads PDF Multipart Form| UploadRoute["POST /upload"]
+    
+    subgraph DatabasePhase [1. Database Initialization]
+        UploadRoute -->|2. Insert Record| SaveDB["save_pdf_to_db(pdf, session)"]
+        SaveDB -->|Generates Primary Key| PDFRecord[("PostgreSQL: PDF (id, file_name)")]
+    end
+    
+    subgraph DiskPhase [2. File System Storage]
+        PDFRecord -->|3. Compute Path: uploads/{pdf_id}.pdf| GetPath["get_pdf_path(pdf_id)"]
+        GetPath -->|4. Update file_path in DB| UpdateDB["update_pdf_file_path(record, path)"]
+        UpdateDB -->|5. Save Raw PDF Bytes| WriteDisk["save_pdf_to_disk(file_path, pdf)"]
+        WriteDisk --> RawFile[("Disk: backend/uploads/{pdf_id}.pdf")]
+    end
+    
+    subgraph IngestionPhase [3. LangChain Ingestion & Vector Indexing]
+        RawFile -->|6. Load Document| PyPDF["PyPDFLoader(file_path)"]
+        PyPDF -->|7. Split into Chunks| Splitter["RecursiveCharacterTextSplitter(1000, 200)"]
+        Splitter -->|8. Generate Embeddings| Embeddings["sentence-transformers/all-MiniLM-L6-v2"]
+        Embeddings -->|9. Build FAISS Index| VectorStore["FAISS.from_documents(chunks, embeddings)"]
+        VectorStore -->|10. Persist Index to Disk| SaveFAISS["save_local('vectorstores/{pdf_id}')"]
+        SaveFAISS --> FAISSFiles[("Disk: backend/vectorstores/{pdf_id}/<br>├── index.faiss<br>└── index.pkl")]
+    end
+    
+    FAISSFiles -->|11. Return JSON Envelope| Response(["200 OK: { success: true, data: { id, filename } }"])
+```
+
+---
+
+### 2. Query & Chat Pipeline (`POST /chat?id={pdf_id}`)
+
+When a user asks a question, the query pipeline loads the pre-built FAISS index for that PDF, retrieves the most relevant chunks, appends conversation history from PostgreSQL, and streams the prompt to the local LLM.
+
+```mermaid
+flowchart TD
+    Client([Client / Frontend]) -->|1. POST /chat?id={pdf_id} with query| ChatRoute["POST /chat"]
+    
+    subgraph ValidationAndHistory [1. Verification & History Fetch]
+        ChatRoute -->|2. Verify PDF Exists| CheckPDF[("PostgreSQL: Check PDF by ID")]
+        CheckPDF -->|3. Fetch Last 10 Messages| FetchHistory[("PostgreSQL: Query Messages (ORDER BY created_at DESC LIMIT 10)")]
+        FetchHistory --> Reorder["Reverse to chronological order"]
+    end
+    
+    subgraph RetrievalPhase [2. Vector Retrieval]
+        ChatRoute -->|4. Load FAISS Store| LoadStore["load_vectorstore(pdf_id)"]
+        LoadStore -->|Read from Disk| FAISSDir[("Disk: backend/vectorstores/{pdf_id}/")]
+        FAISSDir --> Retriever["store.as_retriever(k=4).invoke(query)"]
+        Retriever --> Context["Extracted Top-4 PDF Page Chunks"]
+    end
+    
+    subgraph PromptAndInference [3. Prompt Construction & Local LLM]
+        Context --> SysPrompt["SystemMessage(Instructions + Context)"]
+        Reorder --> HistoryMsgs["HumanMessage / AIMessage list"]
+        ChatRoute --> UserQuery["HumanMessage(current query)"]
+        
+        SysPrompt & HistoryMsgs & UserQuery --> FullPrompt["Combined Messages Payload"]
+        FullPrompt --> OllamaLLM["ChatOllama(model='gemma2:2b')"]
+        OllamaLLM --> Answer["Generated Assistant Response"]
+    end
+    
+    subgraph Persistence [4. Database Logging]
+        Answer --> SaveUser["Save User Message to DB"]
+        Answer --> SaveAI["Save Assistant Message to DB"]
+        SaveUser & SaveAI --> CommitDB[("PostgreSQL: message table")]
+    end
+    
+    CommitDB -->|5. Return Response| Success["200 OK: { success: true, data: { answer } }"]
+```
+
+---
+
+### Disk Storage Paths & Directory Layout
+
+All user-uploaded files and their corresponding FAISS vector stores are isolated on disk by the unique database `pdf_id`:
+
+```
+backend/
+├── uploads/
+│   ├── 1.pdf                     # Raw PDF file stored by database ID (pdf_id = 1)
+│   ├── 2.pdf                     # Raw PDF file stored by database ID (pdf_id = 2)
+│   └── .gitkeep
+└── vectorstores/
+    ├── 1/                        # Isolated FAISS vector store for PDF ID = 1
+    │   ├── index.faiss           # Serialized FAISS vector embeddings index
+    │   └── index.pkl             # Document metadata and chunk store
+    └── 2/                        # Isolated FAISS vector store for PDF ID = 2
+        ├── index.faiss
+        └── index.pkl
+```
+
+- **Original Filename**: Preserved in the PostgreSQL `pdf.file_name` column for user display.
+- **Disk File Path**: Stored in the PostgreSQL `pdf.file_path` column pointing directly to `uploads/{pdf_id}.pdf`.
+- **Vector Index Path**: Resolved dynamically via `vectorstores/{pdf_id}/`.
 
 ---
 
@@ -162,7 +269,7 @@ The application will be accessible at **`http://localhost:5173`**.
 
 ```
 pdf-chatbot/
-├── README.md               # Project documentation
+├── README.md               # Project documentation & architecture diagrams
 ├── backend/
 │   ├── main.py             # FastAPI routes & exception handling
 │   ├── models.py           # SQLModel database schemas (PDF, Message)
@@ -171,8 +278,8 @@ pdf-chatbot/
 │   ├── utils.py            # File helpers, paths & response envelopes
 │   ├── pyproject.toml      # Backend dependencies
 │   ├── .env.example        # Environment variables template
-│   ├── uploads/            # Raw PDF files (named by PDF ID)
-│   └── vectorstores/       # Persisted FAISS vector indexes (per PDF ID)
+│   ├── uploads/            # Raw PDF files (named by PDF ID: uploads/<id>.pdf)
+│   └── vectorstores/       # Persisted FAISS vector indexes (vectorstores/<id>/)
 └── frontend/
     ├── src/
     │   ├── App.tsx         # Dashboard (PDF list + Upload) & Chat views
