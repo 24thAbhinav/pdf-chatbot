@@ -56,72 +56,75 @@ The ingestion pipeline executes **once per uploaded PDF**. Instead of re-embeddi
 
 ```mermaid
 flowchart TD
-    Client([Client / Frontend]) -->|1. Uploads PDF Multipart Form| UploadRoute["POST /upload"]
+    Client([Client / Frontend]) -->|1. Upload PDF multipart form| UploadRoute["POST /upload"]
     
-    subgraph DatabasePhase [1. Database Initialization]
-        UploadRoute -->|2. Insert Record| SaveDB["save_pdf_to_db(pdf, session)"]
-        SaveDB -->|Generates Primary Key| PDFRecord[("PostgreSQL: PDF (id, file_name)")]
+    subgraph DatabasePhase ["1. Database Initialization"]
+        UploadRoute -->|2. Insert record| SaveDB["save_pdf_to_db(pdf, session)"]
+        SaveDB -->|Generates primary key| PDFRecord[("PostgreSQL: PDF (id, file_name)")]
     end
     
-    subgraph DiskPhase [2. File System Storage]
-        PDFRecord -->|3. Compute Path: uploads/{pdf_id}.pdf| GetPath["get_pdf_path(pdf_id)"]
+    subgraph DiskPhase ["2. File System Storage"]
+        PDFRecord -->|3. Compute path: uploads/id.pdf| GetPath["get_pdf_path(pdf_id)"]
         GetPath -->|4. Update file_path in DB| UpdateDB["update_pdf_file_path(record, path)"]
-        UpdateDB -->|5. Save Raw PDF Bytes| WriteDisk["save_pdf_to_disk(file_path, pdf)"]
-        WriteDisk --> RawFile[("Disk: backend/uploads/{pdf_id}.pdf")]
+        UpdateDB -->|5. Save raw PDF bytes| WriteDisk["save_pdf_to_disk(file_path, pdf)"]
+        WriteDisk --> RawFile[("Disk: backend/uploads/ID.pdf")]
     end
     
-    subgraph IngestionPhase [3. LangChain Ingestion & Vector Indexing]
-        RawFile -->|6. Load Document| PyPDF["PyPDFLoader(file_path)"]
-        PyPDF -->|7. Split into Chunks| Splitter["RecursiveCharacterTextSplitter(1000, 200)"]
-        Splitter -->|8. Generate Embeddings| Embeddings["sentence-transformers/all-MiniLM-L6-v2"]
-        Embeddings -->|9. Build FAISS Index| VectorStore["FAISS.from_documents(chunks, embeddings)"]
-        VectorStore -->|10. Persist Index to Disk| SaveFAISS["save_local('vectorstores/{pdf_id}')"]
-        SaveFAISS --> FAISSFiles[("Disk: backend/vectorstores/{pdf_id}/<br>├── index.faiss<br>└── index.pkl")]
+    subgraph IngestionPhase ["3. LangChain Ingestion & Vector Indexing"]
+        RawFile -->|6. Load document| PyPDF["PyPDFLoader(file_path)"]
+        PyPDF -->|7. Split into chunks| Splitter["RecursiveCharacterTextSplitter(1000, 200)"]
+        Splitter -->|8. Generate embeddings| Embeddings["sentence-transformers/all-MiniLM-L6-v2"]
+        Embeddings -->|9. Build FAISS index| VectorStore["FAISS.from_documents(chunks, embeddings)"]
+        VectorStore -->|10. Persist index to disk| SaveFAISS["save_local('vectorstores/ID')"]
+        SaveFAISS --> FAISSFiles[("Disk: backend/vectorstores/ID/<br/>index.faiss & index.pkl")]
     end
     
-    FAISSFiles -->|11. Return JSON Envelope| Response(["200 OK: { success: true, data: { id, filename } }"])
+    FAISSFiles -->|11. Return JSON| Response(["200 OK: Success Envelope with ID & Filename"])
 ```
 
 ---
 
-### 2. Query & Chat Pipeline (`POST /chat?id={pdf_id}`)
+### 2. Query & Chat Pipeline (`POST /chat?id=<pdf_id>`)
 
 When a user asks a question, the query pipeline loads the pre-built FAISS index for that PDF, retrieves the most relevant chunks, appends conversation history from PostgreSQL, and streams the prompt to the local LLM.
 
 ```mermaid
 flowchart TD
-    Client([Client / Frontend]) -->|1. POST /chat?id={pdf_id} with query| ChatRoute["POST /chat"]
+    Client([Client / Frontend]) -->|1. POST /chat?id=ID with query| ChatRoute["POST /chat"]
     
-    subgraph ValidationAndHistory [1. Verification & History Fetch]
-        ChatRoute -->|2. Verify PDF Exists| CheckPDF[("PostgreSQL: Check PDF by ID")]
-        CheckPDF -->|3. Fetch Last 10 Messages| FetchHistory[("PostgreSQL: Query Messages (ORDER BY created_at DESC LIMIT 10)")]
+    subgraph ValidationAndHistory ["1. Verification & History Fetch"]
+        ChatRoute -->|2. Verify PDF exists| CheckPDF[("PostgreSQL: Check PDF by ID")]
+        CheckPDF -->|3. Fetch last 10 messages| FetchHistory[("PostgreSQL: Query Messages (ORDER BY created_at DESC LIMIT 10)")]
         FetchHistory --> Reorder["Reverse to chronological order"]
     end
     
-    subgraph RetrievalPhase [2. Vector Retrieval]
-        ChatRoute -->|4. Load FAISS Store| LoadStore["load_vectorstore(pdf_id)"]
-        LoadStore -->|Read from Disk| FAISSDir[("Disk: backend/vectorstores/{pdf_id}/")]
+    subgraph RetrievalPhase ["2. Vector Retrieval"]
+        ChatRoute -->|4. Load FAISS store| LoadStore["load_vectorstore(pdf_id)"]
+        LoadStore -->|Read from disk| FAISSDir[("Disk: backend/vectorstores/ID/")]
         FAISSDir --> Retriever["store.as_retriever(k=4).invoke(query)"]
         Retriever --> Context["Extracted Top-4 PDF Page Chunks"]
     end
     
-    subgraph PromptAndInference [3. Prompt Construction & Local LLM]
+    subgraph PromptAndInference ["3. Prompt Construction & Local LLM"]
         Context --> SysPrompt["SystemMessage(Instructions + Context)"]
         Reorder --> HistoryMsgs["HumanMessage / AIMessage list"]
-        ChatRoute --> UserQuery["HumanMessage(current query)"]
+        ChatRoute --> UserQuery["HumanMessage(Current query)"]
         
-        SysPrompt & HistoryMsgs & UserQuery --> FullPrompt["Combined Messages Payload"]
+        SysPrompt --> FullPrompt["Combined Messages Payload"]
+        HistoryMsgs --> FullPrompt
+        UserQuery --> FullPrompt
         FullPrompt --> OllamaLLM["ChatOllama(model='gemma2:2b')"]
         OllamaLLM --> Answer["Generated Assistant Response"]
     end
     
-    subgraph Persistence [4. Database Logging]
+    subgraph Persistence ["4. Database Logging"]
         Answer --> SaveUser["Save User Message to DB"]
         Answer --> SaveAI["Save Assistant Message to DB"]
-        SaveUser & SaveAI --> CommitDB[("PostgreSQL: message table")]
+        SaveUser --> CommitDB[("PostgreSQL: message table")]
+        SaveAI --> CommitDB
     end
     
-    CommitDB -->|5. Return Response| Success["200 OK: { success: true, data: { answer } }"]
+    CommitDB -->|5. Return response| Success(["200 OK: Success Envelope with Answer"])
 ```
 
 ---
