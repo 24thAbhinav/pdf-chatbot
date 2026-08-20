@@ -1,20 +1,39 @@
-# 📄 DocuChat — Local RAG PDF Chatbot
+# DocuChat — Local RAG PDF Chatbot
 
-> 💡 **Educational / Learning Project**: This project was built to explore and demonstrate end-to-end **Retrieval-Augmented Generation (RAG)** using local models, relational persistence, vector databases, and modern full-stack web technologies.
+> **Note**: This is an educational and learning project built to explore and demonstrate end-to-end **Retrieval-Augmented Generation (RAG)** using local models, relational persistence, vector databases, and modern full-stack web technologies.
 
 ---
 
-## 🌟 Overview
+## Table of Contents
+
+- [Overview](#overview)
+  - [Key Architecture & Features](#key-architecture--features)
+- [Tech Stack](#tech-stack)
+- [Prerequisites](#prerequisites)
+- [Step-by-Step Installation & Setup](#step-by-step-installation--setup)
+  - [1. Database Setup (PostgreSQL)](#1-database-setup-postgresql)
+  - [2. Ollama LLM Setup](#2-ollama-llm-setup)
+  - [3. Backend Setup](#3-backend-setup)
+  - [4. Frontend Setup](#4-frontend-setup)
+- [Project Structure](#project-structure)
+- [API Endpoints](#api-endpoints)
+- [Standard Response Format](#standard-response-format)
+- [License](#license)
+
+---
+
+## Overview
 
 **DocuChat** allows users to upload PDF documents and engage in context-aware conversations with them. It indexes documents locally into dedicated FAISS vector stores, stores conversation histories and metadata in PostgreSQL, and generates responses completely offline using local embeddings and Ollama.
 
-### Key Architecture & Features:
+### Key Architecture & Features
+
 - **Zero-Cloud / 100% Local Inference**:
   - Embeddings: `sentence-transformers/all-MiniLM-L6-v2`
   - LLM: `gemma2:2b` via [Ollama](https://ollama.com)
 - **RAG Pipeline (LangChain + FAISS)**:
-  - **Upload Time (Ingestion)**: Extract pages via `PyPDFLoader` → Chunk with `RecursiveCharacterTextSplitter` (1000 char size, 200 overlap) → Embed & persist vector index per PDF ID into `vectorstores/<id>/`.
-  - **Query Time (Retrieval)**: Load persisted vector store → Fetch top-4 relevant chunks → Inject conversation history (last 10 messages) + document context into system prompt → Generate response.
+  - **Upload Time (Ingestion)**: Extract pages via `PyPDFLoader` -> Chunk with `RecursiveCharacterTextSplitter` (1000 char size, 200 overlap) -> Embed and persist vector index per PDF ID into `vectorstores/<id>/`.
+  - **Query Time (Retrieval)**: Load persisted vector store -> Fetch top-4 relevant chunks -> Inject conversation history (last 10 messages) + document context into system prompt -> Generate response.
 - **Relational Database (SQLModel + PostgreSQL)**:
   - Stores `PDF` records (id, filename, file path, timestamp).
   - Stores `Message` chat history (`role: user | assistant`, content, timestamps, foreign key relationship).
@@ -25,7 +44,7 @@
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 | Layer | Technology |
 |---|---|
@@ -39,11 +58,11 @@
 
 ---
 
-## 📋 Prerequisites
+## Prerequisites
 
 Before running the project, ensure you have the following installed on your machine:
 
-1. **Python** (>= 3.11 or 3.12/3.14) & [`uv`](https://docs.astral.sh/uv/getting-started/installation/):
+1. **Python** (>= 3.11) & [`uv`](https://docs.astral.sh/uv/getting-started/installation/):
    ```bash
    # Install uv (macOS / Linux)
    curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -60,21 +79,21 @@ Before running the project, ensure you have the following installed on your mach
    brew services start postgresql@16
    ```
 4. **Ollama**:
-   - Download & install from [ollama.com](https://ollama.com/).
+   - Download and install from [ollama.com](https://ollama.com/).
 
 ---
 
-## 🚀 Step-by-Step Installation & Setup
+## Step-by-Step Installation & Setup
 
 ### 1. Database Setup (PostgreSQL)
 
 Create the PostgreSQL database named `pdf_chatbot`:
 
 ```bash
-# Create database
+# Create database via CLI
 createdb pdf_chatbot
 
-# Or using psql:
+# Or using psql
 psql -c "CREATE DATABASE pdf_chatbot;"
 ```
 
@@ -123,7 +142,7 @@ The API will be live at `http://127.0.0.1:8000`.
 
 ### 4. Frontend Setup
 
-In a new terminal window, navigate to the `frontend` directory:
+In a separate terminal window, navigate to the `frontend` directory:
 
 ```bash
 cd frontend
@@ -139,7 +158,7 @@ The application will be accessible at **`http://localhost:5173`**.
 
 ---
 
-## 🧭 Project Structure
+## Project Structure
 
 ```
 pdf-chatbot/
@@ -165,7 +184,7 @@ pdf-chatbot/
 
 ---
 
-## 📡 API Endpoints
+## API Endpoints
 
 | Method | Endpoint | Description |
 |---|---|---|
@@ -177,7 +196,7 @@ pdf-chatbot/
 
 ---
 
-## 📜 Standard Response Format
+## Standard Response Format
 
 All API responses follow a uniform envelope format:
 
@@ -191,6 +210,6 @@ All API responses follow a uniform envelope format:
 
 ---
 
-## 📝 License
+## License
 
 This project is open-source and intended for educational and experimentation purposes.
